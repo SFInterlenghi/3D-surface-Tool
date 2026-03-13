@@ -143,8 +143,9 @@ def get_surface(dados, trans, pls2, pls3, LIM):
         for j in range(N1):
             Pdavez = var2[i]
             Tdavez = var1[j]
-            predict_ = pls2.predict(np.array(trans(Tdavez, Pdavez)).reshape(1, -1))
-            predict_2 = pls3.predict(np.array(trans(Tdavez, Pdavez)).reshape(1, -1))
+            inp = np.array(trans(Tdavez, Pdavez)).reshape(1, -1)
+            predict_ = float(pls2.predict(inp).ravel()[0])
+            predict_2 = float(pls3.predict(inp).ravel()[0])
             Ccalc[i, j] = predict_
             Ccalc_r[i, j] = predict_
 
