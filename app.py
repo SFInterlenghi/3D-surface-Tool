@@ -115,7 +115,7 @@ def get_best_NC(dados, trans, NC):
         pls2 = PLSRegression(n_components=i, scale=False)
         pls2.fit(C, dados.iloc[:, 2])
         Y_pred = pls2.predict(C)
-        RMSE[i - 1] = mean_squared_error(dados.iloc[:, 2], Y_pred, squared=False)
+        RMSE[i - 1] = np.sqrt(mean_squared_error(dados.iloc[:, 2], Y_pred))
     return RMSE, C
 
 
