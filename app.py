@@ -70,7 +70,8 @@ _defaults = dict(
     trans=None, NC=None, Ccalc=None, Ccalc_r=None,
     var1=None, var2=None, computed=False, model_method=None,
     rbf_model=None, rbf_constraint_model=None,
-    predicted_point=None,
+    predicted_point=None, predicted_extrapolated=False,
+    extrap_pending=False, extrap_x1=None, extrap_x2=None,
 )
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -675,7 +676,8 @@ def page_analysis():
                     Ccalc=Ccalc, Ccalc_r=Ccalc_r, var1=var1, var2=var2,
                     computed=True, df_clean=df_clean, model_method="PLS",
                     rbf_model=None, rbf_constraint_model=None,
-                    predicted_point=None,
+                    predicted_point=None, predicted_extrapolated=False,
+                    extrap_pending=False,
                 ))
 
             else:  # RBF
@@ -698,6 +700,7 @@ def page_analysis():
                     computed=True, df_clean=df_clean, model_method="RBF",
                     rbf_model=rbf_model, rbf_constraint_model=rbf_constraint,
                     rbf_rmse=rmse_val, predicted_point=None,
+                    predicted_extrapolated=False, extrap_pending=False,
                 ))
 
         st.success("Superfície calculada com sucesso!")
@@ -727,6 +730,10 @@ def page_analysis():
 
     # Read predicted point from session (persists across reruns)
     predicted_point = st.session_state.get("predicted_point")
+    predicted_extrapolated = st.session_state.get("predicted_extrapolated", False)
+
+    # Only show point on figures if it's within model bounds
+    figure_point = predicted_point if (predicted_point and not predicted_extrapolated) else None
 
     st.divider()
 
@@ -758,14 +765,14 @@ def page_analysis():
 
     # ── 3D Surface ──
     st.markdown("### Superfície 3D")
-    fig3 = figure_surface(Ccalc, var1, var2, Ccalc_r, df_clean, theme, colormap, predicted_point)
+    fig3 = figure_surface(Ccalc, var1, var2, Ccalc_r, df_clean, theme, colormap, figure_point)
     st.plotly_chart(fig3, use_container_width=True, key="fig_surf")
 
     st.divider()
 
     # ── 2D Contour ──
     st.markdown("### Mapa de contorno 2D")
-    fig_cont = figure_contour(Ccalc, Ccalc_r, var1, var2, df_clean, theme, colormap, rest_value, predicted_point)
+    fig_cont = figure_contour(Ccalc, Ccalc_r, var1, var2, df_clean, theme, colormap, rest_value, figure_point)
     st.plotly_chart(fig_cont, use_container_width=True, key="fig_contour")
 
     st.divider()
@@ -780,26 +787,72 @@ def page_analysis():
     with col_p3:
         predict_btn = st.button("Calcular predição", use_container_width=True)
 
-    if predict_btn:
-        if model_method == "PLS":
+    # Check if point is within data range
+    def _is_extrapolated(x1v, x2v, dfc):
+        x1_min, x1_max = dfc.iloc[:, 0].min(), dfc.iloc[:, 0].max()
+        x2_min, x2_max = dfc.iloc[:, 1].min(), dfc.iloc[:, 1].max()
+        return not (x1_min <= x1v <= x1_max and x2_min <= x2v <= x2_max)
+
+    def _compute_prediction(x1v, x2v, m_method, extrapolated):
+        if m_method == "PLS":
             trans = st.session_state["trans"]
             NC = st.session_state["NC"]
             pls3 = st.session_state["pls3"]
             Chat = np.zeros((1, NC))
-            Chat[0, :] = trans(x1_val, x2_val)
-            y_hat = round(float(np.asarray(pls3.predict(Chat)).ravel()[0]), 4)
+            Chat[0, :] = trans(x1v, x2v)
+            return round(float(np.asarray(pls3.predict(Chat)).ravel()[0]), 4)
         else:
             rbf = st.session_state["rbf_model"]
-            y_hat = round(float(rbf(np.array([[x1_val, x2_val]])).ravel()[0]), 4)
+            return round(float(rbf(np.array([[x1v, x2v]])).ravel()[0]), 4)
 
-        # Store and rerun so the figures above re-render with the point
-        st.session_state["predicted_point"] = (x1_val, x2_val, y_hat)
-        st.rerun()
+    if predict_btn:
+        is_extrap = _is_extrapolated(x1_val, x2_val, df_clean)
+
+        if is_extrap:
+            # Store pending state and rerun to show confirmation dialog
+            st.session_state["extrap_pending"] = True
+            st.session_state["extrap_x1"] = x1_val
+            st.session_state["extrap_x2"] = x2_val
+            st.rerun()
+        else:
+            # Within range — compute and store immediately
+            y_hat = _compute_prediction(x1_val, x2_val, model_method, False)
+            st.session_state["predicted_point"] = (x1_val, x2_val, y_hat)
+            st.session_state["predicted_extrapolated"] = False
+            st.session_state["extrap_pending"] = False
+            st.rerun()
+
+    # Handle pending extrapolation confirmation
+    if st.session_state.get("extrap_pending"):
+        ep_x1 = st.session_state["extrap_x1"]
+        ep_x2 = st.session_state["extrap_x2"]
+
+        st.warning(
+            f"⚠️ **Estimativa extrapolada fora da range do modelo.** "
+            f"O ponto ({tags[0]}={ep_x1}, {tags[1]}={ep_x2}) está fora do intervalo dos dados. "
+            f"Proceder? Avalie o resultado com cuidado."
+        )
+        col_yes, col_no, _ = st.columns([1, 1, 3])
+        with col_yes:
+            if st.button("✅ Sim, calcular mesmo assim", use_container_width=True):
+                y_hat = _compute_prediction(ep_x1, ep_x2, model_method, True)
+                st.session_state["predicted_point"] = (ep_x1, ep_x2, y_hat)
+                st.session_state["predicted_extrapolated"] = True
+                st.session_state["extrap_pending"] = False
+                st.rerun()
+        with col_no:
+            if st.button("❌ Não, cancelar", use_container_width=True):
+                st.session_state["extrap_pending"] = False
+                st.rerun()
 
     # Show prediction result (if one exists in session)
     if predicted_point is not None:
         px1, px2, pz = predicted_point
-        st.metric(label="ẑ = f(x₁, x₂)", value=pz)
+
+        if predicted_extrapolated:
+            st.warning(f"⚠️ **ẑ = {pz}** — valor extrapolado fora dos limites do modelo. Interprete com cautela.")
+        else:
+            st.metric(label="ẑ = f(x₁, x₂)", value=pz)
 
         if rest_name != "Problema sem restrições" and rest_value is not None:
             if pz >= rest_value:
