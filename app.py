@@ -406,7 +406,7 @@ if df is not None and st.session_state.get("computed"):
         Chat = np.zeros((1, NC))
         Chat[0, :] = trans(x1_val, x2_val)
         y_hat = pls3.predict(Chat)
-        y_hat = round(float(y_hat[0][0]), 4)
+        y_hat = round(float(np.asarray(y_hat).ravel()[0]), 4)
 
         st.metric(label=f"ẑ = f(x₁, x₂)", value=y_hat)
 
@@ -427,14 +427,21 @@ if df is not None and st.session_state.get("computed"):
     with col_d1:
         pls2 = st.session_state["pls2"]
         try:
-            parametros_xls = pd.DataFrame(
-                data=np.column_stack((
-                    pls2._x_mean, pls2._x_std, pls2.coef_[0],
-                    np.ones(len(pls2._x_mean)) * np.nan
-                )),
-                columns=["mean", "std", "coef", "intercept"],
-            )
-            parametros_xls.iloc[0, parametros_xls.columns.get_loc("intercept")] = float(pls2.intercept_)
+            x_mean = np.asarray(pls2._x_mean).ravel()
+            x_std = np.asarray(pls2._x_std).ravel()
+            coefs = np.asarray(pls2.coef_).ravel()
+            intercept_val = float(np.asarray(pls2.intercept_).ravel()[0])
+
+            n = len(x_mean)
+            intercept_col = np.full(n, np.nan)
+            intercept_col[0] = intercept_val
+
+            parametros_xls = pd.DataFrame({
+                "mean": x_mean,
+                "std": x_std,
+                "coef": coefs[:n],
+                "intercept": intercept_col,
+            })
 
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
@@ -455,9 +462,13 @@ if df is not None and st.session_state.get("computed"):
         try:
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-                for idx, fig in enumerate([fig1, fig2, fig3], start=1):
-                    img_bytes = fig.to_image(format="png", engine="kaleido")
-                    zipf.writestr(f"fig{idx}.png", img_bytes)
+                for idx, (fig, name) in enumerate([
+                    (fig1, "RMSE_components"),
+                    (fig2, "real_vs_predicted"),
+                    (fig3, "3D_surface"),
+                ], start=1):
+                    html_str = fig.to_html(include_plotlyjs="cdn", full_html=True)
+                    zipf.writestr(f"{name}.html", html_str)
             zip_buffer.seek(0)
 
             st.download_button(
