@@ -1,6 +1,3 @@
-# 3D-surface-Tool
-Tool for 3D surfaces
-
 # 📊 3D Surface Viewer — PLS Regression Tool
 
 Interactive tool for generating 3D surface visualizations from Excel data using PLS (Partial Least Squares) regression.
@@ -23,15 +20,6 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Deploy on Streamlit Cloud (free)
-
-1. Push this repo to a **public** GitHub repository
-2. Go to [share.streamlit.io](https://share.streamlit.io)
-3. Click **New app** → select your repo, branch `main`, and file `app.py`
-4. Click **Deploy** — done!
-
-Your team can access the app via the generated URL (e.g. `https://your-app.streamlit.app`).
-
 ## Excel File Format
 
 Your Excel file should have columns representing the process variables. For example:
@@ -46,4 +34,4 @@ Select any two columns as inputs (x₁, x₂) and one as the response (z).
 
 ## License
 
-Internal team tool.
+Internal team tool to generate figures.
