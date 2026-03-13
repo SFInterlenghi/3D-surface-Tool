@@ -261,8 +261,28 @@ st.markdown('<p class="main-title">📊 Módulo de Visualização de Superfície
 st.markdown('<p class="sub-title">Gere superfícies bonitas interpolando via PLS — faça upload de um arquivo Excel para começar</p>', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Sidebar: File upload + Setup
+# Sidebar: Smart data loader + Setup
 # ─────────────────────────────────────────────────────────────────────────────
+
+def col_letter(idx):
+    """Convert 0-based column index to Excel letter (0→A, 25→Z, 26→AA)."""
+    result = ""
+    while True:
+        result = chr(idx % 26 + ord('A')) + result
+        idx = idx // 26 - 1
+        if idx < 0:
+            break
+    return result
+
+
+def load_raw_sheet(uploaded_file, sheet_name):
+    """Load a sheet with no header so every row is visible as-is."""
+    uploaded_file.seek(0)
+    raw = pd.read_excel(uploaded_file, sheet_name=sheet_name,
+                        header=None, engine="openpyxl", dtype=str)
+    return raw
+
+
 with st.sidebar:
     st.header("⚙️ Configuração")
 
@@ -273,19 +293,104 @@ with st.sidebar:
     )
 
     if uploaded_file is not None:
-        try:
-            df = pd.read_excel(uploaded_file, engine="openpyxl")
-            st.session_state["df"] = df
-            st.success(f"Arquivo carregado com sucesso! ({df.shape[0]} linhas × {df.shape[1]} colunas)")
-        except Exception as e:
-            st.error(f"Erro ao ler arquivo: {e}")
+        # ── Step 1: Sheet selector ──
+        uploaded_file.seek(0)
+        xls = pd.ExcelFile(uploaded_file, engine="openpyxl")
+        sheet_names = xls.sheet_names
 
-    st.divider()
+        if len(sheet_names) > 1:
+            sheet = st.selectbox("📄 Selecione a planilha", options=sheet_names, key="sel_sheet")
+        else:
+            sheet = sheet_names[0]
+            st.caption(f"📄 Planilha: **{sheet}**")
 
-    df = st.session_state["df"]
+        raw = load_raw_sheet(uploaded_file, sheet)
+        total_rows, total_cols = raw.shape
 
-    if df is not None:
-        cols = list(df.columns)
+        # ── Step 2: Raw preview ──
+        with st.expander("👀 Pré-visualização do arquivo (primeiras 20 linhas)", expanded=True):
+            preview = raw.head(20).copy()
+            # Show Excel-style row numbers (1-based) and column letters
+            preview.index = range(1, len(preview) + 1)
+            preview.columns = [col_letter(i) for i in range(preview.shape[1])]
+            st.dataframe(preview, use_container_width=True, height=300)
+            st.caption(f"Arquivo: {total_rows} linhas × {total_cols} colunas")
+
+        st.divider()
+
+        # ── Step 3: Header row ──
+        st.subheader("📍 Localização dos dados")
+        header_row = st.number_input(
+            "Linha do cabeçalho (nomes das colunas)",
+            min_value=1, max_value=total_rows, value=1, step=1,
+            help="Número da linha (como no Excel) onde estão os nomes das variáveis.",
+            key="sel_header_row",
+        )
+
+        # ── Step 4: Data start row ──
+        data_start = st.number_input(
+            "Linha de início dos dados",
+            min_value=header_row + 1, max_value=total_rows, value=header_row + 1, step=1,
+            help="Primeira linha com dados numéricos (logo abaixo do cabeçalho, normalmente).",
+            key="sel_data_start",
+        )
+
+        # ── Step 5: Column range ──
+        col_letters = [col_letter(i) for i in range(total_cols)]
+        col_a, col_b = st.columns(2)
+        with col_a:
+            start_col = st.selectbox("Coluna inicial", options=col_letters, index=0, key="sel_col_start")
+        with col_b:
+            end_col = st.selectbox("Coluna final", options=col_letters,
+                                   index=total_cols - 1, key="sel_col_end")
+
+        start_col_idx = col_letters.index(start_col)
+        end_col_idx = col_letters.index(end_col)
+
+        if end_col_idx < start_col_idx:
+            st.error("A coluna final deve ser igual ou posterior à coluna inicial.")
+            st.stop()
+
+        # ── Step 6: Parse data ──
+        # header_row and data_start are 1-based (Excel-style)
+        header_idx = header_row - 1  # 0-based for pandas
+        data_start_idx = data_start - 1
+
+        # Get column names from the header row
+        header_values = raw.iloc[header_idx, start_col_idx:end_col_idx + 1].values
+        col_names = [str(c).strip() if pd.notna(c) else f"Col_{col_letter(start_col_idx + i)}"
+                     for i, c in enumerate(header_values)]
+
+        # Get data rows
+        data_slice = raw.iloc[data_start_idx:, start_col_idx:end_col_idx + 1].copy()
+        data_slice.columns = col_names
+
+        # Convert to numeric where possible, drop all-NaN rows
+        for c in data_slice.columns:
+            data_slice[c] = pd.to_numeric(data_slice[c], errors="coerce")
+        data_slice = data_slice.dropna(how="all").reset_index(drop=True)
+
+        # Store the parsed dataframe
+        st.session_state["df"] = data_slice
+        df = data_slice
+
+        # ── Confirm parsed table ──
+        with st.expander("✅ Tabela interpretada", expanded=False):
+            st.dataframe(df.head(15), use_container_width=True, height=250)
+            st.caption(f"Dados: {df.shape[0]} linhas × {df.shape[1]} colunas  •  "
+                       f"Cabeçalho na linha {header_row}  •  "
+                       f"Dados a partir da linha {data_start}  •  "
+                       f"Colunas {start_col}–{end_col}")
+
+        numeric_cols = list(df.select_dtypes(include=[np.number]).columns)
+        if len(numeric_cols) < 3:
+            st.warning("São necessárias pelo menos 3 colunas numéricas para gerar a superfície.")
+            st.stop()
+
+        st.divider()
+
+        # ── Model variables ──
+        cols = numeric_cols
 
         st.subheader("Variáveis do modelo")
         x1 = st.selectbox("Eixo x₁", options=cols, index=0, key="sel_x1")
@@ -321,35 +426,46 @@ with st.sidebar:
         if compute_btn:
             tags = [x1, x2, x3]
 
+            # Validate no NaNs in selected columns
+            df_clean = df[tags].dropna()
+            if df_clean.shape[0] < 5:
+                st.error(f"Dados insuficientes: apenas {df_clean.shape[0]} linhas válidas nas colunas selecionadas.")
+                st.stop()
+
             with st.spinner("Calculando modelo PLS e gerando superfície…"):
                 trans, NC = get_model(order)
                 st.session_state["trans"] = trans
                 st.session_state["NC"] = NC
 
                 if rest_name == "Problema sem restrições":
-                    RMSE, C = get_best_NC(df[tags], trans, NC)
-                    Y_pred, pls2 = get_model_PLS(RMSE, df[tags], C)
+                    RMSE, C = get_best_NC(df_clean, trans, NC)
+                    Y_pred, pls2 = get_model_PLS(RMSE, df_clean, C)
                     pls3 = pls2
                 else:
                     tags2 = [x1, x2, rest_name]
-                    RMSE, C = get_best_NC(df[tags], trans, NC)
-                    RMSE2, C2 = get_best_NC(df[tags2], trans, NC)
-                    Y_pred, pls2 = get_model_PLS(RMSE, df[tags], C)
-                    _, pls3 = get_model_PLS(RMSE2, df[tags2], C2)
+                    df_clean2 = df[tags2].dropna()
+                    RMSE, C = get_best_NC(df_clean, trans, NC)
+                    RMSE2, C2 = get_best_NC(df_clean2, trans, NC)
+                    Y_pred, pls2 = get_model_PLS(RMSE, df_clean, C)
+                    _, pls3 = get_model_PLS(RMSE2, df_clean2, C2)
 
-                Ccalc, Ccalc_r, var1, var2 = get_surface(df[tags], trans, pls2, pls3, rest_value)
+                Ccalc, Ccalc_r, var1, var2 = get_surface(df_clean, trans, pls2, pls3, rest_value)
 
                 # Store everything in session
                 st.session_state.update(dict(
                     pls2=pls2, pls3=pls3, RMSE=RMSE, C=C,
                     Y_pred=Y_pred, Ccalc=Ccalc, Ccalc_r=Ccalc_r,
                     var1=var1, var2=var2, computed=True,
+                    df_clean=df_clean,
                 ))
 
             st.success("Superfície calculada com sucesso!")
 
     else:
         st.info("Faça upload de um arquivo Excel para começar.")
+        st.session_state["df"] = None
+
+    df = st.session_state.get("df")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -358,6 +474,7 @@ with st.sidebar:
 
 if df is not None and st.session_state.get("computed"):
     tags = [st.session_state["sel_x1"], st.session_state["sel_x2"], st.session_state["sel_x3"]]
+    df_clean = st.session_state.get("df_clean", df[tags].dropna())
     theme = st.session_state["sel_theme"]
     colormap = st.session_state["sel_cmap"]
     RMSE = st.session_state["RMSE"]
@@ -374,14 +491,14 @@ if df is not None and st.session_state.get("computed"):
         fig1 = figure1(RMSE, theme)
         st.plotly_chart(fig1, use_container_width=True, key="fig_rmse")
     with col_v2:
-        fig2 = figure2(df[tags], Y_pred, theme)
+        fig2 = figure2(df_clean, Y_pred, theme)
         st.plotly_chart(fig2, use_container_width=True, key="fig_pred")
 
     st.divider()
 
     # ── 3D Surface ──
     st.markdown("### Superfície gerada")
-    fig3 = figure3(Ccalc, var1, var2, Ccalc_r, df[tags], theme, colormap)
+    fig3 = figure3(Ccalc, var1, var2, Ccalc_r, df_clean, theme, colormap)
     st.plotly_chart(fig3, use_container_width=True, key="fig_surf")
 
     st.divider()
@@ -390,9 +507,9 @@ if df is not None and st.session_state.get("computed"):
     st.markdown("### Predição pontual")
     col_p1, col_p2, col_p3 = st.columns([1, 1, 1])
     with col_p1:
-        x1_val = st.number_input(f"Valor de {tags[0]}", value=float(df[tags[0]].mean()), key="x1_pred")
+        x1_val = st.number_input(f"Valor de {tags[0]}", value=float(df_clean.iloc[:, 0].mean()), key="x1_pred")
     with col_p2:
-        x2_val = st.number_input(f"Valor de {tags[1]}", value=float(df[tags[1]].mean()), key="x2_pred")
+        x2_val = st.number_input(f"Valor de {tags[1]}", value=float(df_clean.iloc[:, 1].mean()), key="x2_pred")
     with col_p3:
         predict_btn = st.button("Calcular predição", use_container_width=True)
 
