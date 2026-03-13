@@ -70,6 +70,7 @@ _defaults = dict(
     trans=None, NC=None, Ccalc=None, Ccalc_r=None,
     var1=None, var2=None, computed=False, model_method=None,
     rbf_model=None, rbf_constraint_model=None,
+    predicted_point=None,
 )
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -203,7 +204,8 @@ def figure_pred(dados, Y_pred, theme, method_name="PLS"):
     return fig
 
 
-def figure_surface(Ccalc, var1, var2, Ccalc_r, dados, theme, colormap, show_points=True):
+def figure_surface(Ccalc, var1, var2, Ccalc_r, dados, theme, colormap, predicted_point=None):
+    """3D surface. If predicted_point=(x1, x2, z), show it as a marker."""
     fig = go.Figure()
     fig.add_trace(go.Surface(
         z=Ccalc, x=var1, y=var2, surfacecolor=Ccalc_r,
@@ -217,15 +219,15 @@ def figure_surface(Ccalc, var1, var2, Ccalc_r, dados, theme, colormap, show_poin
         show=True, usecolormap=True, highlightcolor="limegreen", project_z=True,
     ))
 
-    # Overlay raw data points
-    if show_points:
+    if predicted_point is not None:
+        px1, px2, pz = predicted_point
         fig.add_trace(go.Scatter3d(
-            x=dados.iloc[:, 0].values,
-            y=dados.iloc[:, 1].values,
-            z=dados.iloc[:, 2].values,
-            mode='markers', name='Dados experimentais',
-            marker=dict(size=4, color='#ff4444', symbol='circle',
-                        line=dict(width=1, color='white')),
+            x=[px1], y=[px2], z=[pz],
+            mode='markers+text', name='Predição',
+            text=[f'ẑ={pz}'], textposition='top center',
+            textfont=dict(size=12, color='white'),
+            marker=dict(size=8, color='#ffdd00', symbol='diamond',
+                        line=dict(width=2, color='white')),
         ))
 
     col_names = dados.columns.tolist()
@@ -241,8 +243,8 @@ def figure_surface(Ccalc, var1, var2, Ccalc_r, dados, theme, colormap, show_poin
     return fig
 
 
-def figure_contour(Ccalc, Ccalc_r, var1, var2, dados, theme, colormap, rest_value=None):
-    """2D contour plot with optional constraint boundary."""
+def figure_contour(Ccalc, Ccalc_r, var1, var2, dados, theme, colormap, rest_value=None, predicted_point=None):
+    """2D contour plot with optional constraint boundary and predicted point."""
     col_names = dados.columns.tolist()
     fig = go.Figure()
 
@@ -255,17 +257,8 @@ def figure_contour(Ccalc, Ccalc_r, var1, var2, dados, theme, colormap, rest_valu
         name=col_names[2],
     ))
 
-    # Scatter raw data
-    fig.add_trace(go.Scatter(
-        x=dados.iloc[:, 0].values, y=dados.iloc[:, 1].values,
-        mode='markers', name='Dados experimentais',
-        marker=dict(size=7, color='#ff4444', line=dict(width=1, color='white')),
-    ))
-
     # Constraint boundary line
     if rest_value is not None:
-        # The boundary is where Ccalc_r transitions from valid → NaN
-        # We draw it as a contour line on the full (unmasked) surface
         fig.add_trace(go.Contour(
             z=Ccalc, x=var1, y=var2,
             contours=dict(
@@ -275,6 +268,18 @@ def figure_contour(Ccalc, Ccalc_r, var1, var2, dados, theme, colormap, rest_valu
             name=f'Restrição = {rest_value}',
             showscale=False,
             line=dict(width=3, color='#ffdd00', dash='dash'),
+        ))
+
+    # Predicted point
+    if predicted_point is not None:
+        px1, px2, pz = predicted_point
+        fig.add_trace(go.Scatter(
+            x=[px1], y=[px2],
+            mode='markers+text', name=f'Predição (ẑ={pz})',
+            text=[f'ẑ={pz}'], textposition='top center',
+            textfont=dict(size=12),
+            marker=dict(size=14, color='#ffdd00', symbol='star',
+                        line=dict(width=2, color='white')),
         ))
 
     fig.update_layout(
@@ -330,6 +335,74 @@ def load_raw_sheet(uploaded_file, sheet_name):
     uploaded_file.seek(0)
     return pd.read_excel(uploaded_file, sheet_name=sheet_name,
                          header=None, engine="openpyxl", dtype=str)
+
+
+def auto_detect_layout(raw):
+    """Guess header row, data start row, start column, and end column.
+    
+    Header: first row where >= 3 cells are non-empty AND mostly non-numeric text.
+    Data start: first row after header where at least one cell is numeric.
+    Columns: first and last columns that contain at least one numeric value in the
+             data region.
+    
+    Returns 1-based row numbers and 0-based column indices.
+    """
+    total_rows, total_cols = raw.shape
+
+    # --- Detect header row ---
+    header_row_0 = 0  # fallback: first row
+    for r in range(total_rows):
+        row_vals = raw.iloc[r]
+        non_empty = row_vals.dropna()
+        non_empty = non_empty[non_empty.astype(str).str.strip() != '']
+        if len(non_empty) < 3:
+            continue
+        # Check that most non-empty cells are NOT purely numeric
+        numeric_count = sum(1 for v in non_empty if _is_numeric_str(str(v)))
+        text_count = len(non_empty) - numeric_count
+        if text_count >= numeric_count:
+            header_row_0 = r
+            break
+
+    # --- Detect data start row ---
+    data_start_0 = header_row_0 + 1
+    for r in range(header_row_0 + 1, total_rows):
+        row_vals = raw.iloc[r]
+        if any(_is_numeric_str(str(v)) for v in row_vals.dropna()):
+            data_start_0 = r
+            break
+
+    # --- Detect column range (based on data region) ---
+    data_region = raw.iloc[data_start_0:]
+    first_col, last_col = 0, total_cols - 1
+
+    for c in range(total_cols):
+        col_vals = data_region.iloc[:, c].dropna()
+        numeric_count = sum(1 for v in col_vals if _is_numeric_str(str(v)))
+        if numeric_count >= 1:
+            first_col = c
+            break
+
+    for c in range(total_cols - 1, -1, -1):
+        col_vals = data_region.iloc[:, c].dropna()
+        numeric_count = sum(1 for v in col_vals if _is_numeric_str(str(v)))
+        if numeric_count >= 1:
+            last_col = c
+            break
+
+    return header_row_0 + 1, data_start_0 + 1, first_col, last_col
+
+
+def _is_numeric_str(s):
+    """Check if a string represents a number."""
+    s = s.strip()
+    if not s:
+        return False
+    try:
+        float(s.replace(',', '.'))
+        return True
+    except ValueError:
+        return False
 
 
 def go_to(page):
@@ -394,17 +467,23 @@ def page_home():
         st.dataframe(preview, use_container_width=True, height=320)
         st.caption(f"Arquivo: **{total_rows}** linhas × **{total_cols}** colunas")
 
+    # Auto-detect layout
+    det_header, det_data, det_sc, det_ec = auto_detect_layout(raw)
+
     col_h1, col_h2, col_h3, col_h4 = st.columns(4)
     letters = [col_letter(i) for i in range(total_cols)]
     with col_h1:
-        header_row = st.number_input("Linha do cabeçalho", 1, total_rows, 1, key="sel_header_row")
+        header_row = st.number_input("Linha do cabeçalho", 1, total_rows, det_header, key="sel_header_row",
+                                     help="Detectado automaticamente — ajuste se necessário.")
     with col_h2:
+        det_data_clamped = max(header_row + 1, det_data)
         data_start = st.number_input("Início dos dados", header_row + 1, total_rows,
-                                     min(header_row + 1, total_rows), key="sel_data_start")
+                                     min(det_data_clamped, total_rows), key="sel_data_start",
+                                     help="Detectado automaticamente — ajuste se necessário.")
     with col_h3:
-        start_col = st.selectbox("Coluna inicial", letters, 0, key="sel_col_start")
+        start_col = st.selectbox("Coluna inicial", letters, det_sc, key="sel_col_start")
     with col_h4:
-        end_col = st.selectbox("Coluna final", letters, total_cols - 1, key="sel_col_end")
+        end_col = st.selectbox("Coluna final", letters, det_ec, key="sel_col_end")
 
     sc, ec = letters.index(start_col), letters.index(end_col)
     if ec < sc:
@@ -453,7 +532,23 @@ def page_home():
     df_num = data_slice[numeric_cols]
 
     with tab_stats:
-        st.dataframe(df_num.describe().T.style.format("{:.4f}"), use_container_width=True)
+        # Condensed table: count, mean, std, min, max (no quartiles — those go in the boxplot)
+        stats_df = df_num.describe().T[["count", "mean", "std", "min", "max"]]
+        st.dataframe(stats_df.style.format({"count": "{:.0f}", "mean": "{:.4f}",
+                                            "std": "{:.4f}", "min": "{:.4f}", "max": "{:.4f}"}),
+                     use_container_width=True)
+
+        # Interactive box plots for distribution / quartiles
+        st.markdown("**Distribuição por variável**")
+        fig_box = go.Figure()
+        for col in numeric_cols:
+            fig_box.add_trace(go.Box(y=df_num[col].dropna(), name=col, boxmean='sd'))
+        fig_box.update_layout(
+            height=450, template="plotly_dark",
+            yaxis_title="Valor", showlegend=False,
+            margin=dict(l=10, r=10, t=10, b=10),
+        )
+        st.plotly_chart(fig_box, use_container_width=True, key="fig_box")
 
     with tab_corr:
         fig_corr = figure_correlation(df_num, "plotly_dark")
@@ -537,15 +632,13 @@ def page_analysis():
             rest_value = st.number_input("Valor mínimo", 0.0, key="sel_rest_val")
 
     # Appearance
-    col_t1, col_t2, col_t3 = st.columns(3)
+    col_t1, col_t2 = st.columns(2)
     with col_t1:
         theme = st.selectbox("Template", themes, 0, key="sel_theme")
     with col_t2:
         colormap = st.selectbox("Mapa de cores", mapcolors_list,
                                 mapcolors_list.index("viridis") if "viridis" in mapcolors_list else 0,
                                 key="sel_cmap")
-    with col_t3:
-        show_points = st.checkbox("Mostrar dados na superfície 3D", value=True, key="sel_show_pts")
 
     # ── Compute ──
     compute_btn = st.button("🚀 Calcular superfície", use_container_width=True, type="primary")
@@ -582,6 +675,7 @@ def page_analysis():
                     Ccalc=Ccalc, Ccalc_r=Ccalc_r, var1=var1, var2=var2,
                     computed=True, df_clean=df_clean, model_method="PLS",
                     rbf_model=None, rbf_constraint_model=None,
+                    predicted_point=None,
                 ))
 
             else:  # RBF
@@ -603,7 +697,7 @@ def page_analysis():
                     Ccalc=Ccalc, Ccalc_r=Ccalc_r, var1=var1, var2=var2,
                     computed=True, df_clean=df_clean, model_method="RBF",
                     rbf_model=rbf_model, rbf_constraint_model=rbf_constraint,
-                    rbf_rmse=rmse_val,
+                    rbf_rmse=rmse_val, predicted_point=None,
                 ))
 
         st.success("Superfície calculada com sucesso!")
@@ -630,7 +724,9 @@ def page_analysis():
     var1 = st.session_state["var1"]
     var2 = st.session_state["var2"]
     model_method = st.session_state["model_method"]
-    show_points = st.session_state.get("sel_show_pts", True)
+
+    # Read predicted point from session (persists across reruns)
+    predicted_point = st.session_state.get("predicted_point")
 
     st.divider()
 
@@ -662,14 +758,14 @@ def page_analysis():
 
     # ── 3D Surface ──
     st.markdown("### Superfície 3D")
-    fig3 = figure_surface(Ccalc, var1, var2, Ccalc_r, df_clean, theme, colormap, show_points)
+    fig3 = figure_surface(Ccalc, var1, var2, Ccalc_r, df_clean, theme, colormap, predicted_point)
     st.plotly_chart(fig3, use_container_width=True, key="fig_surf")
 
     st.divider()
 
     # ── 2D Contour ──
     st.markdown("### Mapa de contorno 2D")
-    fig_cont = figure_contour(Ccalc, Ccalc_r, var1, var2, df_clean, theme, colormap, rest_value)
+    fig_cont = figure_contour(Ccalc, Ccalc_r, var1, var2, df_clean, theme, colormap, rest_value, predicted_point)
     st.plotly_chart(fig_cont, use_container_width=True, key="fig_contour")
 
     st.divider()
@@ -696,13 +792,20 @@ def page_analysis():
             rbf = st.session_state["rbf_model"]
             y_hat = round(float(rbf(np.array([[x1_val, x2_val]])).ravel()[0]), 4)
 
-        st.metric(label="ẑ = f(x₁, x₂)", value=y_hat)
+        # Store and rerun so the figures above re-render with the point
+        st.session_state["predicted_point"] = (x1_val, x2_val, y_hat)
+        st.rerun()
+
+    # Show prediction result (if one exists in session)
+    if predicted_point is not None:
+        px1, px2, pz = predicted_point
+        st.metric(label="ẑ = f(x₁, x₂)", value=pz)
 
         if rest_name != "Problema sem restrições" and rest_value is not None:
-            if y_hat >= rest_value:
-                st.success(f"**ẑ = {y_hat}** → estado **viável** (≥ {rest_value})")
+            if pz >= rest_value:
+                st.success(f"**ẑ = {pz}** → estado **viável** (≥ {rest_value})")
             else:
-                st.error(f"**ẑ = {y_hat}** → estado **não viável** (< {rest_value})")
+                st.error(f"**ẑ = {pz}** → estado **não viável** (< {rest_value})")
 
     st.divider()
 
