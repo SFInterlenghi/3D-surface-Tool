@@ -11,6 +11,7 @@ import warnings
 from sklearn.metrics import mean_squared_error
 from sklearn.cross_decomposition import PLSRegression
 # from scipy.interpolate import RBFInterpolator  # RBF disabled — uncomment to enable
+from scipy.stats import shapiro
 from plotly.subplots import make_subplots
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -307,15 +308,6 @@ def figure_correlation(df_numeric, theme):
     return fig
 
 
-def figure_scatter_matrix(df_numeric, theme):
-    """Scatter matrix of numeric columns."""
-    fig = px.scatter_matrix(
-        df_numeric, dimensions=df_numeric.columns.tolist(),
-        opacity=0.6, height=600,
-    )
-    fig.update_traces(diagonal_visible=True, marker=dict(size=3))
-    fig.update_layout(template=theme, margin=dict(l=40, r=10, t=10, b=40))
-    return fig
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -528,21 +520,33 @@ def page_home():
     st.divider()
     st.markdown("### 4 · Exploração de dados")
 
-    tab_stats, tab_corr, tab_scatter = st.tabs(["📋 Estatísticas", "🔥 Correlação", "🔵 Scatter Matrix"])
+    tab_stats, tab_dist, tab_corr, tab_quality = st.tabs([
+        "📋 Estatísticas", "📊 Distribuições", "🔥 Correlação", "🔍 Qualidade dos dados"
+    ])
 
     df_num = data_slice[numeric_cols]
 
+    # ── Tab 1: Descriptive statistics + box plots ──
     with tab_stats:
-        # Condensed table: count, mean, std, min, max (no quartiles — those go in the boxplot)
-        stats_df = df_num.describe().T[["count", "mean", "std", "min", "max"]]
-        st.dataframe(stats_df.style.format({"count": "{:.0f}", "mean": "{:.4f}",
-                                            "std": "{:.4f}", "min": "{:.4f}", "max": "{:.4f}"}),
-                     use_container_width=True)
+        # Extended table: count, mean, std, min, max, skewness, kurtosis
+        stats_df = df_num.describe().T[["count", "mean", "std", "min", "max"]].copy()
+        stats_df["skewness"] = df_num.skew()
+        stats_df["kurtosis"] = df_num.kurtosis()
+        st.dataframe(stats_df.style.format({
+            "count": "{:.0f}", "mean": "{:.4f}", "std": "{:.4f}",
+            "min": "{:.4f}", "max": "{:.4f}",
+            "skewness": "{:.3f}", "kurtosis": "{:.3f}",
+        }), use_container_width=True)
+
+        st.caption(
+            "**Skewness**: 0 = simétrica, > 0 = cauda à direita, < 0 = cauda à esquerda. "
+            "**Kurtosis**: 0 = normal, > 0 = caudas pesadas (outliers prováveis), < 0 = caudas leves."
+        )
 
         # User-selectable box plots
-        st.markdown("**Distribuição por variável**")
+        st.markdown("**Box plots**")
         box_cols = st.multiselect(
-            "Selecione as variáveis para visualizar",
+            "Selecione as variáveis para comparar",
             options=numeric_cols,
             default=numeric_cols[:3],
             key="box_cols",
@@ -558,19 +562,125 @@ def page_home():
             )
             st.plotly_chart(fig_box, use_container_width=True, key="fig_box")
         else:
-            st.info("Selecione pelo menos uma variável para visualizar o box plot.")
+            st.info("Selecione pelo menos uma variável.")
 
+    # ── Tab 2: Distributions + normality test ──
+    with tab_dist:
+        st.markdown("**Selecione as variáveis para verificar a distribuição**")
+        dist_cols = st.multiselect(
+            "Variáveis", options=numeric_cols,
+            default=numeric_cols[:3], key="dist_cols",
+        )
+
+        if dist_cols:
+            # Histograms with KDE
+            n_dist = len(dist_cols)
+            cols_per_row = min(n_dist, 3)
+            rows_needed = (n_dist + cols_per_row - 1) // cols_per_row
+
+            fig_dist = make_subplots(
+                rows=rows_needed, cols=cols_per_row,
+                subplot_titles=dist_cols,
+                vertical_spacing=0.12,
+            )
+
+            for idx, col in enumerate(dist_cols):
+                r = idx // cols_per_row + 1
+                c = idx % cols_per_row + 1
+                vals = df_num[col].dropna()
+                fig_dist.add_trace(
+                    go.Histogram(
+                        x=vals, name=col, nbinsx=25,
+                        marker_color='rgba(100,149,237,0.7)',
+                        marker_line=dict(width=1, color='white'),
+                        showlegend=False,
+                    ), row=r, col=c,
+                )
+
+            fig_dist.update_layout(
+                height=320 * rows_needed, template="plotly_dark",
+                margin=dict(l=10, r=10, t=40, b=10),
+            )
+            st.plotly_chart(fig_dist, use_container_width=True, key="fig_dist")
+
+            # Normality test table (Shapiro-Wilk)
+            st.markdown("**Teste de normalidade (Shapiro-Wilk)**")
+            normality_rows = []
+            for col in dist_cols:
+                vals = df_num[col].dropna()
+                # Shapiro-Wilk limited to 5000 samples
+                sample = vals.values[:5000] if len(vals) > 5000 else vals.values
+                if len(sample) >= 3:
+                    stat, p_value = shapiro(sample)
+                    is_normal = "✅ Normal (p ≥ 0.05)" if p_value >= 0.05 else "⚠️ Não-normal (p < 0.05)"
+                    normality_rows.append({
+                        "Variável": col,
+                        "Estatística W": round(stat, 4),
+                        "p-valor": f"{p_value:.4e}",
+                        "Resultado (α=0.05)": is_normal,
+                    })
+                else:
+                    normality_rows.append({
+                        "Variável": col,
+                        "Estatística W": "—",
+                        "p-valor": "—",
+                        "Resultado (α=0.05)": "Dados insuficientes",
+                    })
+            st.dataframe(pd.DataFrame(normality_rows), use_container_width=True, hide_index=True)
+            st.caption(
+                "**Shapiro-Wilk**: se p-valor < 0.05, rejeitamos a hipótese de normalidade. "
+                "Isso não significa que os dados são ruins — apenas que a distribuição não é gaussiana. "
+                "Distribuições bimodais, skewed ou com outliers falharão neste teste."
+            )
+        else:
+            st.info("Selecione pelo menos uma variável.")
+
+    # ── Tab 3: Correlation ──
     with tab_corr:
         fig_corr = figure_correlation(df_num, "plotly_dark")
         st.plotly_chart(fig_corr, use_container_width=True, key="fig_corr")
 
-    with tab_scatter:
-        # Limit to max 8 columns for readability
-        scatter_cols = numeric_cols[:8]
-        if len(numeric_cols) > 8:
-            st.caption(f"Exibindo as primeiras 8 de {len(numeric_cols)} colunas para legibilidade.")
-        fig_sm = figure_scatter_matrix(data_slice[scatter_cols], "plotly_dark")
-        st.plotly_chart(fig_sm, use_container_width=True, key="fig_scatter")
+    # ── Tab 4: Data quality ──
+    with tab_quality:
+        st.markdown("**Dados faltantes (NaN) por variável**")
+        missing_df = pd.DataFrame({
+            "Variável": numeric_cols,
+            "Total": [df_num[c].shape[0] for c in numeric_cols],
+            "Válidos": [df_num[c].notna().sum() for c in numeric_cols],
+            "Faltantes": [df_num[c].isna().sum() for c in numeric_cols],
+            "% Faltante": [round(df_num[c].isna().mean() * 100, 1) for c in numeric_cols],
+        })
+        st.dataframe(missing_df, use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        st.markdown("**Detecção de outliers (método IQR)**")
+        outlier_rows = []
+        for col in numeric_cols:
+            vals = df_num[col].dropna()
+            if len(vals) < 4:
+                outlier_rows.append({"Variável": col, "Outliers": 0, "% Outliers": 0.0,
+                                     "Limite inferior": "—", "Limite superior": "—"})
+                continue
+            q1 = vals.quantile(0.25)
+            q3 = vals.quantile(0.75)
+            iqr = q3 - q1
+            lower = q1 - 1.5 * iqr
+            upper = q3 + 1.5 * iqr
+            n_outliers = int(((vals < lower) | (vals > upper)).sum())
+            outlier_rows.append({
+                "Variável": col,
+                "Outliers": n_outliers,
+                "% Outliers": round(n_outliers / len(vals) * 100, 1),
+                "Limite inferior": round(lower, 4),
+                "Limite superior": round(upper, 4),
+            })
+        st.dataframe(pd.DataFrame(outlier_rows), use_container_width=True, hide_index=True)
+        st.caption(
+            "Outliers definidos como pontos fora do intervalo [Q1 − 1.5×IQR, Q3 + 1.5×IQR]. "
+            "Isso não significa que devem ser removidos — investigue se representam erros de medição "
+            "ou condições operacionais extremas legítimas."
+        )
 
     # Store and navigate
     st.session_state["df"] = data_slice
