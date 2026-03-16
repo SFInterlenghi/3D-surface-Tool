@@ -10,7 +10,7 @@ import warnings
 
 from sklearn.metrics import mean_squared_error
 from sklearn.cross_decomposition import PLSRegression
-from scipy.interpolate import RBFInterpolator
+# from scipy.interpolate import RBFInterpolator  # RBF disabled — uncomment to enable
 from plotly.subplots import make_subplots
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -59,7 +59,7 @@ st.markdown("""
 # ─────────────────────────────────────────────────────────────────────────────
 mapcolors_list = px.colors.named_colorscales()
 themes = ["plotly", "plotly_white", "plotly_dark", "ggplot2", "seaborn", "simple_white", "none"]
-RBF_KERNELS = ["thin_plate_spline", "multiquadric", "inverse_multiquadric", "gaussian", "linear", "cubic", "quintic"]
+# RBF_KERNELS = ["thin_plate_spline", "multiquadric", "inverse_multiquadric", "gaussian", "linear", "cubic", "quintic"]  # RBF disabled
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Session state defaults
@@ -146,32 +146,32 @@ def get_surface_pls(dados, trans, pls2, pls3, LIM, N=200):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# MODEL / MATH HELPERS — RBF
+# MODEL / MATH HELPERS — RBF (disabled — uncomment to enable)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def fit_rbf(dados, kernel="thin_plate_spline", smoothing=0.0):
-    """Fit an RBF interpolator from the first two columns → third column."""
-    X = dados.iloc[:, :2].values
-    y = dados.iloc[:, 2].values
-    rbf = RBFInterpolator(X, y, kernel=kernel, smoothing=smoothing)
-    Y_pred = rbf(X)
-    return Y_pred, rbf
-
-
-def get_surface_rbf(dados, rbf_model, rbf_constraint, LIM, N=200):
-    var1 = np.linspace(dados.iloc[:, 0].min(), dados.iloc[:, 0].max(), N)
-    var2 = np.linspace(dados.iloc[:, 1].min(), dados.iloc[:, 1].max(), N)
-    grid_x, grid_y = np.meshgrid(var1, var2)
-    grid_pts = np.column_stack([grid_x.ravel(), grid_y.ravel()])
-
-    Ccalc = rbf_model(grid_pts).reshape(N, N)
-    Ccalc_r = Ccalc.copy()
-
-    if LIM is not None and rbf_constraint is not None:
-        constraint_vals = rbf_constraint(grid_pts).reshape(N, N)
-        Ccalc_r[constraint_vals < LIM] = np.nan
-
-    return Ccalc, Ccalc_r, var1, var2
+# def fit_rbf(dados, kernel="thin_plate_spline", smoothing=0.0):
+#     """Fit an RBF interpolator from the first two columns → third column."""
+#     X = dados.iloc[:, :2].values
+#     y = dados.iloc[:, 2].values
+#     rbf = RBFInterpolator(X, y, kernel=kernel, smoothing=smoothing)
+#     Y_pred = rbf(X)
+#     return Y_pred, rbf
+#
+#
+# def get_surface_rbf(dados, rbf_model, rbf_constraint, LIM, N=200):
+#     var1 = np.linspace(dados.iloc[:, 0].min(), dados.iloc[:, 0].max(), N)
+#     var2 = np.linspace(dados.iloc[:, 1].min(), dados.iloc[:, 1].max(), N)
+#     grid_x, grid_y = np.meshgrid(var1, var2)
+#     grid_pts = np.column_stack([grid_x.ravel(), grid_y.ravel()])
+#
+#     Ccalc = rbf_model(grid_pts).reshape(N, N)
+#     Ccalc_r = Ccalc.copy()
+#
+#     if LIM is not None and rbf_constraint is not None:
+#         constraint_vals = rbf_constraint(grid_pts).reshape(N, N)
+#         Ccalc_r[constraint_vals < LIM] = np.nan
+#
+#     return Ccalc, Ccalc_r, var1, var2
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -417,7 +417,7 @@ def go_to(page):
 def page_home():
 
     st.markdown('<p class="main-title">📊 Módulo de Visualização de Superfícies</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-title">Gere superfícies 3D interpolando via PLS ou RBF — faça upload de um arquivo Excel para começar</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-title">Gere superfícies 3D interpolando via PLS — faça upload de um arquivo Excel para começar</p>', unsafe_allow_html=True)
 
     # Feature cards
     c1, c2, c3, c4 = st.columns(4)
@@ -425,8 +425,8 @@ def page_home():
         st.markdown("""<div class="feature-card"><h4>📂 Upload flexível</h4>
         <p>Dados em qualquer posição — escolha planilha, cabeçalho e colunas.</p></div>""", unsafe_allow_html=True)
     with c2:
-        st.markdown("""<div class="feature-card"><h4>📈 PLS + RBF</h4>
-        <p>Dois métodos de interpolação com validação automática.</p></div>""", unsafe_allow_html=True)
+        st.markdown("""<div class="feature-card"><h4>📈 Regressão PLS</h4>
+        <p>Interpolação polinomial de ordem 2 a 5 com validação automática.</p></div>""", unsafe_allow_html=True)
     with c3:
         st.markdown("""<div class="feature-card"><h4>🌐 3D + Contorno 2D</h4>
         <p>Superfície rotacionável e mapa de contorno com restrições.</p></div>""", unsafe_allow_html=True)
@@ -539,17 +539,26 @@ def page_home():
                                             "std": "{:.4f}", "min": "{:.4f}", "max": "{:.4f}"}),
                      use_container_width=True)
 
-        # Interactive box plots for distribution / quartiles
+        # User-selectable box plots
         st.markdown("**Distribuição por variável**")
-        fig_box = go.Figure()
-        for col in numeric_cols:
-            fig_box.add_trace(go.Box(y=df_num[col].dropna(), name=col, boxmean='sd'))
-        fig_box.update_layout(
-            height=450, template="plotly_dark",
-            yaxis_title="Valor", showlegend=False,
-            margin=dict(l=10, r=10, t=10, b=10),
+        box_cols = st.multiselect(
+            "Selecione as variáveis para visualizar",
+            options=numeric_cols,
+            default=numeric_cols[:3],
+            key="box_cols",
         )
-        st.plotly_chart(fig_box, use_container_width=True, key="fig_box")
+        if box_cols:
+            fig_box = go.Figure()
+            for col in box_cols:
+                fig_box.add_trace(go.Box(y=df_num[col].dropna(), name=col, boxmean='sd'))
+            fig_box.update_layout(
+                height=450, template="plotly_dark",
+                yaxis_title="Valor", showlegend=False,
+                margin=dict(l=10, r=10, t=10, b=10),
+            )
+            st.plotly_chart(fig_box, use_container_width=True, key="fig_box")
+        else:
+            st.info("Selecione pelo menos uma variável para visualizar o box plot.")
 
     with tab_corr:
         fig_corr = figure_correlation(df_num, "plotly_dark")
@@ -603,23 +612,10 @@ def page_analysis():
     with col_m3:
         x3 = st.selectbox("Eixo z (resposta)", numeric_cols, min(2, len(numeric_cols)-1), key="sel_x3")
 
-    # Method selection
-    col_method, col_mp1, col_mp2 = st.columns(3)
-    with col_method:
-        method = st.selectbox("Método de interpolação", ["PLS (Polinomial)", "RBF (Radial Basis Function)"],
-                              key="sel_method")
+    # Model parameters (PLS only)
+    col_mp1, col_mp2 = st.columns(2)
     with col_mp1:
-        if method == "PLS (Polinomial)":
-            order = st.selectbox("Ordem do polinômio", [2, 3, 4, 5], 1, key="sel_order")
-        else:
-            rbf_kernel = st.selectbox("Kernel RBF", RBF_KERNELS, 0, key="sel_rbf_kernel")
-    with col_mp2:
-        if method == "PLS (Polinomial)":
-            st.markdown("")  # spacer
-        else:
-            rbf_smooth = st.number_input("Smoothing", 0.0, 100.0, 0.0, step=0.1,
-                                         help="0 = interpolação exata. Valores maiores suavizam o ajuste.",
-                                         key="sel_rbf_smooth")
+        order = st.selectbox("Ordem do polinômio", [2, 3, 4, 5], 1, key="sel_order")
 
     # Constraint
     col_r1, col_r2 = st.columns(2)
@@ -651,57 +647,31 @@ def page_analysis():
             st.error(f"Apenas {df_clean.shape[0]} linhas válidas — insuficiente.")
             return
 
-        with st.spinner("Calculando modelo e gerando superfície…"):
+        with st.spinner("Calculando modelo PLS e gerando superfície…"):
+            trans, NC = get_model(order)
+            st.session_state["trans"] = trans
+            st.session_state["NC"] = NC
 
-            if method == "PLS (Polinomial)":
-                trans, NC = get_model(order)
-                st.session_state["trans"] = trans
-                st.session_state["NC"] = NC
+            if rest_name == "Problema sem restrições":
+                RMSE, C = get_best_NC(df_clean, trans, NC)
+                Y_pred, pls2 = get_model_PLS(RMSE, df_clean, C)
+                pls3 = pls2
+            else:
+                tags2 = [x1, x2, rest_name]
+                df_clean2 = df[tags2].dropna()
+                RMSE, C = get_best_NC(df_clean, trans, NC)
+                RMSE2, C2 = get_best_NC(df_clean2, trans, NC)
+                Y_pred, pls2 = get_model_PLS(RMSE, df_clean, C)
+                _, pls3 = get_model_PLS(RMSE2, df_clean2, C2)
 
-                if rest_name == "Problema sem restrições":
-                    RMSE, C = get_best_NC(df_clean, trans, NC)
-                    Y_pred, pls2 = get_model_PLS(RMSE, df_clean, C)
-                    pls3 = pls2
-                else:
-                    tags2 = [x1, x2, rest_name]
-                    df_clean2 = df[tags2].dropna()
-                    RMSE, C = get_best_NC(df_clean, trans, NC)
-                    RMSE2, C2 = get_best_NC(df_clean2, trans, NC)
-                    Y_pred, pls2 = get_model_PLS(RMSE, df_clean, C)
-                    _, pls3 = get_model_PLS(RMSE2, df_clean2, C2)
-
-                Ccalc, Ccalc_r, var1, var2 = get_surface_pls(df_clean, trans, pls2, pls3, rest_value)
-                st.session_state.update(dict(
-                    pls2=pls2, pls3=pls3, RMSE=RMSE, C=C, Y_pred=Y_pred,
-                    Ccalc=Ccalc, Ccalc_r=Ccalc_r, var1=var1, var2=var2,
-                    computed=True, df_clean=df_clean, model_method="PLS",
-                    rbf_model=None, rbf_constraint_model=None,
-                    predicted_point=None, predicted_extrapolated=False,
-                    extrap_pending=False,
-                ))
-
-            else:  # RBF
-                Y_pred, rbf_model = fit_rbf(df_clean, kernel=rbf_kernel, smoothing=rbf_smooth)
-                rbf_constraint = None
-                if rest_name != "Problema sem restrições":
-                    tags2 = [x1, x2, rest_name]
-                    df_clean2 = df[tags2].dropna()
-                    _, rbf_constraint = fit_rbf(df_clean2, kernel=rbf_kernel, smoothing=rbf_smooth)
-
-                Ccalc, Ccalc_r, var1, var2 = get_surface_rbf(
-                    df_clean, rbf_model, rbf_constraint, rest_value)
-
-                # Compute RMSE for display
-                rmse_val = np.sqrt(mean_squared_error(df_clean.iloc[:, 2], Y_pred))
-
-                st.session_state.update(dict(
-                    pls2=None, pls3=None, RMSE=None, C=None, Y_pred=Y_pred,
-                    Ccalc=Ccalc, Ccalc_r=Ccalc_r, var1=var1, var2=var2,
-                    computed=True, df_clean=df_clean, model_method="RBF",
-                    rbf_model=rbf_model, rbf_constraint_model=rbf_constraint,
-                    rbf_rmse=rmse_val, predicted_point=None,
-                    predicted_extrapolated=False, extrap_pending=False,
-                ))
+            Ccalc, Ccalc_r, var1, var2 = get_surface_pls(df_clean, trans, pls2, pls3, rest_value)
+            st.session_state.update(dict(
+                pls2=pls2, pls3=pls3, RMSE=RMSE, C=C, Y_pred=Y_pred,
+                Ccalc=Ccalc, Ccalc_r=Ccalc_r, var1=var1, var2=var2,
+                computed=True, df_clean=df_clean, model_method="PLS",
+                predicted_point=None, predicted_extrapolated=False,
+                extrap_pending=False,
+            ))
 
         st.success("Superfície calculada com sucesso!")
         st.rerun()
@@ -726,7 +696,6 @@ def page_analysis():
     Ccalc_r = st.session_state["Ccalc_r"]
     var1 = st.session_state["var1"]
     var2 = st.session_state["var2"]
-    model_method = st.session_state["model_method"]
 
     # Read predicted point from session (persists across reruns)
     predicted_point = st.session_state.get("predicted_point")
@@ -738,28 +707,16 @@ def page_analysis():
     st.divider()
 
     # ── Validation ──
-    st.markdown(f"### Validação do modelo ({model_method})")
+    st.markdown("### Validação do modelo (PLS)")
 
-    if model_method == "PLS":
-        RMSE = st.session_state["RMSE"]
-        col_v1, col_v2 = st.columns(2)
-        with col_v1:
-            fig1 = figure_rmse(RMSE, theme)
-            st.plotly_chart(fig1, use_container_width=True, key="fig_rmse")
-        with col_v2:
-            fig2 = figure_pred(df_clean, Y_pred, theme, "PLS")
-            st.plotly_chart(fig2, use_container_width=True, key="fig_pred")
-    else:
-        col_v1, col_v2 = st.columns(2)
-        with col_v1:
-            rbf_rmse = st.session_state.get("rbf_rmse", 0)
-            st.metric("RMSE (RBF)", f"{rbf_rmse:.6f}")
-            r2 = 1 - (np.sum((df_clean.iloc[:, 2].values - np.asarray(Y_pred).ravel())**2) /
-                       np.sum((df_clean.iloc[:, 2].values - df_clean.iloc[:, 2].mean())**2))
-            st.metric("R²", f"{r2:.6f}")
-        with col_v2:
-            fig2 = figure_pred(df_clean, Y_pred, theme, "RBF")
-            st.plotly_chart(fig2, use_container_width=True, key="fig_pred")
+    RMSE = st.session_state["RMSE"]
+    col_v1, col_v2 = st.columns(2)
+    with col_v1:
+        fig1 = figure_rmse(RMSE, theme)
+        st.plotly_chart(fig1, use_container_width=True, key="fig_rmse")
+    with col_v2:
+        fig2 = figure_pred(df_clean, Y_pred, theme, "PLS")
+        st.plotly_chart(fig2, use_container_width=True, key="fig_pred")
 
     st.divider()
 
@@ -793,17 +750,13 @@ def page_analysis():
         x2_min, x2_max = dfc.iloc[:, 1].min(), dfc.iloc[:, 1].max()
         return not (x1_min <= x1v <= x1_max and x2_min <= x2v <= x2_max)
 
-    def _compute_prediction(x1v, x2v, m_method, extrapolated):
-        if m_method == "PLS":
-            trans = st.session_state["trans"]
-            NC = st.session_state["NC"]
-            pls3 = st.session_state["pls3"]
-            Chat = np.zeros((1, NC))
-            Chat[0, :] = trans(x1v, x2v)
-            return round(float(np.asarray(pls3.predict(Chat)).ravel()[0]), 4)
-        else:
-            rbf = st.session_state["rbf_model"]
-            return round(float(rbf(np.array([[x1v, x2v]])).ravel()[0]), 4)
+    def _compute_prediction(x1v, x2v):
+        trans = st.session_state["trans"]
+        NC = st.session_state["NC"]
+        pls3 = st.session_state["pls3"]
+        Chat = np.zeros((1, NC))
+        Chat[0, :] = trans(x1v, x2v)
+        return round(float(np.asarray(pls3.predict(Chat)).ravel()[0]), 4)
 
     if predict_btn:
         is_extrap = _is_extrapolated(x1_val, x2_val, df_clean)
@@ -816,7 +769,7 @@ def page_analysis():
             st.rerun()
         else:
             # Within range — compute and store immediately
-            y_hat = _compute_prediction(x1_val, x2_val, model_method, False)
+            y_hat = _compute_prediction(x1_val, x2_val)
             st.session_state["predicted_point"] = (x1_val, x2_val, y_hat)
             st.session_state["predicted_extrapolated"] = False
             st.session_state["extrap_pending"] = False
@@ -835,7 +788,7 @@ def page_analysis():
         col_yes, col_no, _ = st.columns([1, 1, 3])
         with col_yes:
             if st.button("✅ Sim, calcular mesmo assim", use_container_width=True):
-                y_hat = _compute_prediction(ep_x1, ep_x2, model_method, True)
+                y_hat = _compute_prediction(ep_x1, ep_x2)
                 st.session_state["predicted_point"] = (ep_x1, ep_x2, y_hat)
                 st.session_state["predicted_extrapolated"] = True
                 st.session_state["extrap_pending"] = False
@@ -864,43 +817,35 @@ def page_analysis():
 
     # ── Equation + Downloads ──
     st.markdown("### Equação e downloads")
-    if model_method == "PLS":
-        st.latex(r"\hat{y} = \left(\frac{x - \mu}{\sigma}\right) \cdot \tilde{B} + B_0")
-    else:
-        st.latex(r"\hat{y} = \sum_{i=1}^{N} w_i \, \phi\!\left(\|x - x_i\|\right)")
+    st.latex(r"\hat{y} = \left(\frac{x - \mu}{\sigma}\right) \cdot \tilde{B} + B_0")
 
     col_d1, col_d2 = st.columns(2)
 
     with col_d1:
-        if model_method == "PLS":
-            pls2 = st.session_state["pls2"]
-            try:
-                x_mean = np.asarray(pls2._x_mean).ravel()
-                x_std = np.asarray(pls2._x_std).ravel()
-                coefs = np.asarray(pls2.coef_).ravel()
-                intercept_val = float(np.asarray(pls2.intercept_).ravel()[0])
-                n = len(x_mean)
-                ic = np.full(n, np.nan); ic[0] = intercept_val
-                par_df = pd.DataFrame({"mean": x_mean, "std": x_std, "coef": coefs[:n], "intercept": ic})
-                buf = io.BytesIO()
-                with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
-                    par_df.to_excel(w, sheet_name="parameters-PLS", index=False)
-                buf.seek(0)
-                st.download_button("📥 Baixar parâmetros PLS (.xlsx)", buf,
-                                   "parametros_PLS.xlsx",
-                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                   use_container_width=True)
-            except Exception as e:
-                st.warning(f"Parâmetros indisponíveis: {e}")
-        else:
-            st.info("Para RBF, os parâmetros são os pesos do interpolador (download não aplicável).")
+        pls2 = st.session_state["pls2"]
+        try:
+            x_mean = np.asarray(pls2._x_mean).ravel()
+            x_std = np.asarray(pls2._x_std).ravel()
+            coefs = np.asarray(pls2.coef_).ravel()
+            intercept_val = float(np.asarray(pls2.intercept_).ravel()[0])
+            n = len(x_mean)
+            ic = np.full(n, np.nan); ic[0] = intercept_val
+            par_df = pd.DataFrame({"mean": x_mean, "std": x_std, "coef": coefs[:n], "intercept": ic})
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
+                par_df.to_excel(w, sheet_name="parameters-PLS", index=False)
+            buf.seek(0)
+            st.download_button("📥 Baixar parâmetros PLS (.xlsx)", buf,
+                               "parametros_PLS.xlsx",
+                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               use_container_width=True)
+        except Exception as e:
+            st.warning(f"Parâmetros indisponíveis: {e}")
 
     with col_d2:
         try:
-            all_figs = [("real_vs_predicted", fig2), ("3D_surface", fig3), ("contour_2D", fig_cont)]
-            if model_method == "PLS":
-                all_figs.insert(0, ("RMSE_components", fig1))
-
+            all_figs = [("RMSE_components", fig1), ("real_vs_predicted", fig2),
+                        ("3D_surface", fig3), ("contour_2D", fig_cont)]
             zbuf = io.BytesIO()
             with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zipf:
                 for name, fig in all_figs:
